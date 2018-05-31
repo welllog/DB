@@ -9,3 +9,5 @@ orinfy/DB   vs   Thinkphp3.2
 ![vs4](./vs4.png)
 
 ## use reference notes
+
+###### tips: if you can provide a job for me,please contact 867804244@qq.com
