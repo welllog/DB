@@ -2,13 +2,14 @@
 
 namespace orinfy;
 
+// TODO 大量数据limit优化
 
 class DB
 {
     private static $instance;
     // 数据库链接配置
     private $conf;
-    // pdo多链接池
+    // pdo多链接
     private $linkPool = [];
     // 当前PDO连接
     private $link;
@@ -103,16 +104,11 @@ class DB
         // 传入链接是否存在,存在不重复创建
         if (!isset($this->linkPool[$connect])) {
 
-            $dsn = ":host={$conf['host']};port={$conf['port']};dbname={$conf['dbname']};charset={$conf['charset']}";
-            if ($conf['driver'] === 'pgsql') {
-                $dsn = 'pgsql' . $dsn . ";user={$conf['username']};password={$conf['password']}";
-                $this->linkPool[$connect] = new \PDO($dsn);
-            } else {
-                $dsn = 'mysql' . $dsn;
-                // 是否开启长链接
-                $conf['params'][\PDO::ATTR_PERSISTENT] = empty($conf['params'][\PDO::ATTR_PERSISTENT]) ? false : true;
-                $this->linkPool[$connect] = new \PDO($dsn, $conf['username'], $conf['password'], $conf['params']);
-            }
+            $dsn = $conf['driver'] . ":host={$conf['host']};port={$conf['port']};dbname={$conf['dbname']};charset={$conf['charset']}";
+            $conf['params'][\PDO::ATTR_PERSISTENT] = $conf['pconnect'] ? true : false;
+            $conf['params'][\PDO::ATTR_TIMEOUT] = $conf['time_out'] ? $conf['time_out'] : 3;
+            $this->linkPool[$connect] = new \PDO($dsn, $conf['username'], $conf['password'], $conf['params']);
+            
         }
         // 传递当前链接
         $this->link = &$this->linkPool[$connect];

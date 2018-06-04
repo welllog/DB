@@ -5,12 +5,12 @@ return [
         'driver' => 'mysql',   // pgsql(postgresql)
         'host' => '127.0.0.1',
         'port' => '3306',
-        'username' => '',
-        'password' => '',
-        'dbname' => '',
-        'params' => [],
+        'username' => 'root',
+        'password' => '123',
+        'dbname' => 'aixin_main',
         'charset' => 'utf8',
-        'pconnect' => 'false',
-        'prefix' => ''
+        'pconnect' => false,
+        'time_out' => '',
+        'prefix' => 'aixin_',
     ]
 ];
