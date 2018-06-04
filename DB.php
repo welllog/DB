@@ -2,8 +2,6 @@
 
 namespace orinfy;
 
-// TODO 大量数据limit优化
-
 class DB
 {
     private static $instance;
@@ -103,7 +101,6 @@ class DB
         $conf = $this->conf[$connect];
         // 传入链接是否存在,存在不重复创建
         if (!isset($this->linkPool[$connect])) {
-
             $dsn = $conf['driver'] . ":host={$conf['host']};port={$conf['port']};dbname={$conf['dbname']};charset={$conf['charset']}";
             $conf['params'][\PDO::ATTR_PERSISTENT] = $conf['pconnect'] ? true : false;
             $conf['params'][\PDO::ATTR_TIMEOUT] = $conf['time_out'] ? $conf['time_out'] : 3;
