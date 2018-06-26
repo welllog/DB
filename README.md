@@ -56,17 +56,17 @@ $db->table('scores')->where('id', '=', 10)->decrement('score');
 $db->table('scores')->where('id', '=', 10)->decrement('score', 2);
 $db->table('scores')->where('id', '=', 10)->decrement([['score', 2], ['level', 1]]);
 ```
-####notice
+#### notice
 **If there is no where，changes will not happened**
 
-###Delete values from table
+### Delete values from table
 ```php
 $db->table('logs')->where([['id', '>', 9], ['level', '<', 2]])->delete();
 ```
-####notice
+#### notice
 **If there is no where，nothing be deleted**
 
-###Selection 
+### Selection 
 ```php
 $rows = $db->table('user')->get();
 ```
@@ -108,7 +108,7 @@ $db->table('user')->sum('age');
 $db->table('user')->count();
 $db->table('user')->avg('age');
 ```
-####use where 
+#### use where 
 ```php
 $db->table('user')->where('id', '>', 10)->where('level', '=', 5)->get();
 $db->table('user')->where([['id', '>', 10], ['level', '=', 5]])->orWhere('status', '=', 0)->get();
@@ -131,14 +131,14 @@ where('username', '=', 'job')->where('age', '>', 23)
 where([['username', '=', 'job'], ['age', '>', 23]])
 where('`id`>? and `status`=?', [10, 1])
 ```
-####use select
+#### use select
 filter columns
 ```php
 $db->table('users')->select('id', 'username', 'age')->get();
 $db->table('users')->select(['id', 'username', 'age'])->get();
 $db->table('users')->select(['id', 'username', 'age', 'sum(score) as total'])->get();
 ```
-####use join
+#### use join
 join function
 ```php
 $db->table('user as u')->join('article as a', 'u.id', '=', 'a.uid')->select('u.*', 'a.commend')->get();
@@ -152,7 +152,7 @@ you can olso use 'leftJoin' and 'rightJoin' and native sql
 $db->table('user')->leftJoin('role', 'user.role_id', '=', 'role.id')->rightJoin('posts', 'uid', '=', 'user.id');
 $db->table('user')->join('role', 'test_user.role_id=test_role.id and test_role.status>?', [1]);
 ```
-####order by,group by...
+#### order by,group by...
 ```php
 $db->table('user')->orderBy('id', 'desc')->get();
 $db->table('user')->orderBy('id', 'asc')->get();
@@ -161,7 +161,7 @@ $db->table('user')->select('count(id) as num')->groupBy('team_id')->having('`num
 $db->table('user')->limit(2)->get();
 $db->table('user')->limit(5, 2)->get();
 ```
-###transaction
+### transaction
 oringfy/DB provide transaction common API
 ```php
 $db->beginTrans();
@@ -169,7 +169,7 @@ $db->inTrans();
 $db->rollBack();
 $db->commit();
 ```
-###native sql
+### native sql
 orinfy/DB also support native sql
 ```php
 $db->exec('delete from test_user');
@@ -184,5 +184,5 @@ you could get PDO to use
 $pdo = $db->getPdo();
 ```
 
-######tips
+###### tips
 If you have any questions please contact orinfy@foxmail.com
