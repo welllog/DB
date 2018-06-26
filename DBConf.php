@@ -5,12 +5,13 @@ return [
         'driver' => 'mysql',   // pgsql(postgresql)
         'host' => '127.0.0.1',
         'port' => '3306',
-        'username' => '',
-        'password' => '',
-        'dbname' => '',
+        'username' => 'root',
+        'password' => '123',
+        'dbname' => 'local_kdm',
         'charset' => 'utf8',
         'pconnect' => false,
-        'time_out' => '',
-        'prefix' => 'test_',
+        'time_out' => 3,
+        'prefix' => 'kdm_',
+        'throw_exception' => true
     ]
 ];
