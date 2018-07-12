@@ -303,10 +303,15 @@ class DB
         return $this;
     }
 
-    public function groupBy(string $column) : DB
+    public function groupBy($column) : DB
     {
-        $column = $this->column($column);
-        $this->sqlSlice['group_by'] = ' group by ' . $column . ' ';
+    	$columns = is_array($column) ? $column : func_get_args();
+    	$columnStr = '';
+    	foreach ($columns as $value) {
+    		$columnStr = $this->column($column) . ',';
+    	}
+        $columnStr = rtrim($columnStr, ',');
+        $this->sqlSlice['group_by'] = ' group by ' . $columnStr . ' ';
         return $this;
     }
 
