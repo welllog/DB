@@ -9,7 +9,7 @@ include 'DB.php';
 ```
 Then you have to instantiate the class like this
 ```php
-$db = \orify\DB::i();
+$db = \orinfy\DB::i();
 ```
 ### Insert values to a table
 Insert a record
@@ -110,7 +110,7 @@ $db->table('user')->avg('age');
 ```
 #### use where 
 ```php
-$db->table('user')->where('id', '>', 10)->where('level', '=', 5)->get();
+$db->table('user')->where('id', 10)->where('level', '=', 5)->get();
 $db->table('user')->where([['id', '>', 10], ['level', '=', 5]])->orWhere('status', '=', 0)->get();
 $db->table('user')->where([['id', '>', 10], ['level', '=', 5]])->orWhere('status', '=', 0)
     ->orWhere(function ($query) {
@@ -129,7 +129,7 @@ whereColumn('id', '>', 'parent_id')
 where('`username`=? and `age`>?', ['job', 23])
 where('username', '=', 'job')->where('age', '>', 23)
 where([['username', '=', 'job'], ['age', '>', 23]])
-where('`id`>? and `status`=?', [10, 1])
+whereRaw('`id`>? and `status`=?', [10, 1])
 ```
 #### use select
 filter columns

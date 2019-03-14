@@ -41,7 +41,6 @@ class DB
 
     public static function i() : DB
     {
-        if (!class_exists(\PDO::class)) throw new \Exception('没有pdo扩展');
         if (null === self::$instance) {
             self::$instance = new self();
         }
@@ -56,6 +55,7 @@ class DB
         }
         $conf = $this->conf[$connect];
         if (!isset($this->links[$connect])) {
+            if (!class_exists(\PDO::class)) throw new \Exception('没有pdo扩展');
             $dsn = $conf['driver'] . ":host={$conf['host']};port={$conf['port']};dbname={$conf['dbname']};charset={$conf['charset']}";
             $conf['params'][\PDO::ATTR_PERSISTENT] = $conf['pconnect'] ? true : false;
             $conf['params'][\PDO::ATTR_TIMEOUT] = $conf['time_out'] ? $conf['time_out'] : 3;
@@ -94,14 +94,17 @@ class DB
 
     public function table(string $table) : DB
     {
-        $offset = stripos($table, ' as ');
-        if ($offset === false) {
-            $tableName = trim($table, ' `');
+        $table = trim($table);
+        $foffset = strpos($table, ' ');
+        if ($foffset === false) {
+            $tableName = $table;
             $alias = '';
+
         } else {
-            $tableName = trim(substr($table, 0, $offset), ' `');
-            $alias = trim(substr($table, $offset + 4), ' `');
-            $alias = ' as `' . $this->conf[$this->connect]['prefix'] . $alias . '`';
+            $tableName = substr($table, 0, $foffset);
+
+            $soffset = strrpos($table, ' ');
+            $alias = ' as `' . $this->conf[$this->connect]['prefix'] . substr($table, $soffset+1) . '`';
         }
         $this->table = $this->conf[$this->connect]['prefix'] . $tableName;
         $this->sqlSlice['table'] = ' `' . $this->table . '`' . $alias;
@@ -122,29 +125,36 @@ class DB
             return $this;
         }
         $columnSql = '';
-        foreach ($columns as $val) {
-            $offset = stripos($val, ' as ');
-            if ($offset === false) {
-                $column = $val;
-                $alias = '';
-            } else {
-                $column = substr($val, 0, $offset);
-                $alias = ' as `' . trim(substr($val, $offset + 4), ' `') . '`';
-            }
-            $func = 'pla';
+        foreach ($columns as $column) {
+            // 处理可能带有函数的列名
+            $func = '@';
             $table = '';
             $arr = explode('(', $column);
             if (count($arr) === 2) {
-                $func = $arr[0] . '(pla)';
+                $func = $arr[0] . '(@)';
                 $column = $arr[1];
             }
+            // 处理可能带有表名的列名
             $arr = explode('.', $column);
             if (count($arr) === 2) {
-                $table = '`' . $this->conf[$this->connect]['prefix'] . trim($arr[0], ' `') . '`.';
+                $table = '`' . $this->conf[$this->connect]['prefix'] . trim($arr[0]) . '`.';
                 $column = $arr[1];
             }
-            $column = $table . '`' . trim($column, ' `)') . '`';
-            $column = str_replace('pla', $column, $func);
+            $column = trim($column, ' )');
+            $foffset = strpos($column, ' ');
+            if ($foffset === false) { // 获取列名
+                $realcolumn = $column;
+                $alias = '';
+            } else {
+                $realcolumn = rtrim(substr($column, 0, $foffset), ' )');
+                $soffset = strrpos($column, ' ');
+                $alias = ' as `' . substr($column, $soffset+1) . '`';
+            }
+            if ($realcolumn !== '*') { // *号不添加``
+                $realcolumn = '`' . $realcolumn . '`';
+            }
+            $column = $table . $realcolumn;
+            $column = str_replace('@', $column, $func);
             $columnSql .= $column . $alias . ',';
         }
         $this->sqlSlice['columns'] = ' '.rtrim($columnSql, ',').' ';
@@ -153,13 +163,25 @@ class DB
 
     public function where(...$where) : DB
     {
-        $this->_where($where, 'and');
+        $this->_where('and', ...$where);
         return $this;
     }
 
     public function orWhere(...$where) : DB
     {
-        $this->_where($where, 'or');
+        $this->_where('or', ...$where);
+        return $this;
+    }
+
+    public function whereRaw(string $whereSql, array $whereParams) : DB
+    {
+        if ($this->sqlSlice['where'] === '') {
+            $this->sqlSlice['where'] = ' where ' . $whereSql;
+        } else {
+            if ($whereSql && substr($this->sqlSlice['where'], -1) !== '(') $whereSql = ' and ' .  $whereSql;
+            $this->sqlSlice['where'] .= $whereSql;
+        }
+        $this->paramSlice['where'] = array_merge($this->paramSlice['where'], $whereParams);
         return $this;
     }
 
@@ -274,21 +296,21 @@ class DB
         return $this;
     }
 
-    public function join(...$ags) : DB
+    public function join(...$args) : DB
     {
-        $this->_join($ags, 'inner join ');
+        $this->_join('inner join ', ...$args);
         return $this;
     }
 
-    public function leftJoin(...$ags) : DB
+    public function leftJoin(...$args) : DB
     {
-        $this->_join($ags, 'left join ');
+        $this->_join('left join ', ...$args);
         return $this;
     }
 
-    public function rightJoin(...$ags) : DB
+    public function rightJoin(...$args) : DB
     {
-        $this->_join($ags, 'right join ');
+        $this->_join('right join ', ...$args);
         return $this;
     }
 
@@ -305,26 +327,24 @@ class DB
 
     public function groupBy($column) : DB
     {
-    	$columns = is_array($column) ? $column : func_get_args();
-    	$columnStr = '';
-    	foreach ($columns as $value) {
-    		$columnStr = $this->column($column) . ',';
-    	}
+        $columns = is_array($column) ? $column : func_get_args();
+        $columnStr = '';
+        foreach ($columns as $value) {
+            $columnStr .= $this->column($value) . ',';
+        }
         $columnStr = rtrim($columnStr, ',');
         $this->sqlSlice['group_by'] = ' group by ' . $columnStr . ' ';
         return $this;
     }
 
-    public function having() : DB
+    public function having(...$params) : DB
     {
-        $argNum = func_num_args();
-        $params = func_get_args();
         $havingSql = ' having ';
-        if ($argNum === 3) { // Simple parameters
+        if (isset($params[2])) { // Simple parameters
             $column = $this->column($params[0]);
             $havingSql .= "{$column} {$params[1]} ?";
             $this->paramSlice['having'][] = $params[2];
-        } elseif ($argNum === 2) { // Native sql
+        } else { // Native sql
             $havingSql .= $params[0];
             $this->paramSlice['having'] = $params[1];
         }
@@ -341,23 +361,28 @@ class DB
 
     public function allow($columns) : DB
     {
-        $this->paramSlice['allow'] = is_array($columns) ? $columns : func_get_args();
+        $allows = is_array($columns) ? $columns : func_get_args();
+        foreach ($allows as $a) {
+            $this->paramSlice['allow'][$a] = '';
+        }
         return $this;
     }
 
     public function insert(array $insert) : int
     {
+        if (!$insert) return 0;
         $columns = '(';
         $values = '';
         $allow = $this->paramSlice['allow'];
         $filter = ($allow !== []) ? true : false;
         if (isset($insert[0]) && is_array($insert[0])) {
+            if (!$insert[0]) return 0;
             $time = 0;
             foreach ($insert as $val) {
                 $values .= '(';
                 foreach ($val as $k => $v) {
-                    if (!$filter || in_array($k, $allow)) {
-                        if ($time == 0) $columns .= '`' . trim($k, ' `') . '`,';
+                    if (!$filter || isset($allow[$k])) {
+                        if ($time == 0) $columns .= '`' . $k . '`,';
                         $values .= '?,';
                         $this->paramSlice['insert'][] = $v;
                     }
@@ -370,8 +395,8 @@ class DB
         } else {
             $values .= '(';
             foreach ($insert as $key => $val) {
-                if (!$filter || in_array($key, $allow)) {
-                    $columns .= '`' . trim($key, ' `') . '`,';
+                if (!$filter || isset($allow[$key])) {
+                    $columns .= '`' . $key . '`,';
                     $values .= '?,';
                     $this->paramSlice['insert'][] = $val;
                 }
@@ -381,18 +406,20 @@ class DB
         }
         $this->sqlSlice['insert'] = $columns . ' values ' . $values;
         $this->resolve('insert');
-        return $this->_exec();
+        $this->_exec();
+        return $this->pdoStatement->rowCount();
     }
 
     public function insertGetId(array $insert) : int
     {
+        if (!$insert) return 0;
         $columns = '(';
         $values = '(';
         $allow = $this->paramSlice['allow'];
         $filter = ($allow !== []) ? true : false;
         foreach ($insert as $key => $val) {
-            if (!$filter || in_array($key, $allow)) {
-                $columns .= '`' . trim($key, ' `') . '`,';
+            if (!$filter || isset($allow[$key])) {
+                $columns .= '`' . $key . '`,';
                 $values .= '?,';
                 $this->paramSlice['insert'][] = $val;
             }
@@ -401,25 +428,26 @@ class DB
         $columns = rtrim($columns, ',') . ')';
         $this->sqlSlice['insert'] = $columns . ' values ' . $values;
         $this->resolve('insert');
-        $this->pdoStatement = $this->currentLink->prepare($this->sql);
-        $this->pdoStatement->execute($this->params);
+        $this->_exec();
         return $this->currentLink->lastInsertId();
     }
 
     public function update(array $update) : int
     {
+        if (!$update) return 0;
         $updateSql = 'set ';
         $allow = $this->paramSlice['allow'];
         $filter = ($allow !== []) ? true : false;
         foreach ($update as $key => $val) {
-            if (!$filter || in_array($key, $allow)) {
-                $updateSql .= '`' . trim($key, ' `') . '`=?,';
+            if (!$filter || isset($allow[$key])) {
+                $updateSql .= '`' . $key . '`=?,';
                 $this->paramSlice['update'][] = $val;
             }
         }
         $this->sqlSlice['update'] = rtrim($updateSql, ',');
         $this->resolve('update');
-        return $this->_exec();
+        $this->_exec();
+        return $this->pdoStatement->rowCount();
     }
 
     public function increment($increment) : int
@@ -427,7 +455,7 @@ class DB
         $updateSql = 'set ';
         if (is_array($increment)) {
             foreach ($increment as $val) {
-                $field = '`' . trim($val[0], ' `') . '`';
+                $field = '`' . $val[0] . '`';
                 $updateSql .= $field . '=' . $field . '+?,';
                 $this->paramSlice['update'][] = $val[1];
             }
@@ -435,12 +463,13 @@ class DB
         } else {
             $args = func_get_args();
             $incr = count($args) === 2 ? $args[1] : 1;
-            $field = '`' . trim($args[0], ' `') . '`';
+            $field = '`' . $args[0] . '`';
             $this->sqlSlice['update'] = $updateSql . $field . '=' . $field . '+?';
             $this->paramSlice['update'][] = $incr;
         }
         $this->resolve('update');
-        return $this->_exec();
+        $this->_exec();
+        return $this->pdoStatement->rowCount();
     }
 
     public function decrement($decrement) : int
@@ -448,7 +477,7 @@ class DB
         $updateSql = 'set ';
         if (is_array($decrement)) {
             foreach ($decrement as $val) {
-                $field = '`' . trim($val[0], ' `') . '`';
+                $field = '`' . $val[0] . '`';
                 $updateSql .= $field . '=' . $field . '-?,';
                 $this->paramSlice['update'][] = $val[1];
             }
@@ -456,43 +485,53 @@ class DB
         } else {
             $args = func_get_args();
             $decr = count($args) === 2 ? $args[1] : 1;
-            $field = '`' . trim($args[0], ' `') . '`';
+            $field = '`' . $args[0] . '`';
             $this->sqlSlice['update'] = $updateSql . $field . '=' . $field . '-?';
             $this->paramSlice['update'][] = $decr;
         }
         $this->resolve('update');
-        return $this->_exec();
+        $this->_exec();
+        return $this->pdoStatement->rowCount();
     }
 
     public function delete() : int
     {
         $this->resolve('delete');
-        return $this->_exec();
+        $this->_exec();
+        return $this->pdoStatement->rowCount();
     }
 
     public function getSql() : string
     {
-        if ($this->sql === null) {
-            $this->resolve();
+        $this->resolve();
+        return $this->resolveSql();
+    }
+
+    protected function resolveSql() : string
+    {
+        if (!$this->sql) return '';
+        $arr = explode('?', $this->sql);
+        $sql = '';
+        foreach ($arr as $k => $v) {
+            $sql .= $v . ($this->params[$k] ?? '');
         }
-        return $this->sql;
+        if (!$sql) $sql = $arr[0];
+        return $sql;
     }
 
     public function get() : array
     {
         $this->resolve();
-        $this->pdoStatement = $this->currentLink->prepare($this->sql);
-        $this->pdoStatement->execute($this->params);
+        $this->_exec();
         return $this->pdoStatement->fetchAll(\PDO::FETCH_ASSOC); // PDO::FETCH_OBJ
     }
 
     public function first() : ?array
     {
         $this->resolve();
-        $this->pdoStatement = $this->currentLink->prepare($this->sql);
-        $this->pdoStatement->execute($this->params);
+        $this->_exec();
         $res = $this->pdoStatement->fetch(\PDO::FETCH_ASSOC);
-        $this->pdoStatement->closeCursor();
+//        $this->pdoStatement->closeCursor();
         return $res ? $res : null;
     }
 
@@ -502,8 +541,18 @@ class DB
         ($key !== '') && ($columns[] = $key);
         $res = $this->select($columns)->get();
         if ($res === []) return $res;
-        if (count($columns) === 2) {
+        $col = trim($col);
+        $offset = strpos($col, '.');
+        if ($offset !== false) {
+            $col = ltrim(substr($col, $offset+1));
+        }
+        if ($key !== '') {
             $data = [];
+            $key = trim($key);
+            $offset = strpos($key, '.');
+            if ($offset !== false) {
+                $key = ltrim(substr($key, $offset+1));
+            }
             foreach ($res as $val) {
                 $data[$val[$key]] = $val[$col];
             }
@@ -628,9 +677,13 @@ class DB
 
     private function _exec() : int
     {
-        $this->pdoStatement = $this->currentLink->prepare($this->sql);
-        $this->pdoStatement->execute($this->params);
-        return $this->pdoStatement->rowCount();
+        try {
+            $this->pdoStatement = $this->currentLink->prepare($this->sql);
+            $this->pdoStatement->execute($this->params);
+        } catch (\Exception $e) {
+            $sql = $this->resolveSql();
+            throw new \Exception('error: '.$e->getMessage().' ; sql: ' . $sql);
+        }
     }
 
     private function resolve(string $option = 'select') : void
@@ -685,50 +738,43 @@ class DB
         $this->sqlSlice['where'] .= ')';
     }
 
-    private function _join(...$args) : void
+    private function _join($joinSql, ...$args) : void
     {
-        $joinSql = $args[1];
-        $args = $args[0];
-        $offset = stripos($args[0], ' as ');
-        if ($offset === false) {
-            $tableName = trim($args[0], ' `');
+        $args[0] = trim($args[0]);
+        $foffset = strpos($args[0], ' ');
+        if ($foffset === false) {
+            $tableName = $args[0];
             $alias = '';
         } else {
-            $tableName = trim(substr($args[0], 0, $offset), ' `');
-            $alias = $this->conf[$this->connect]['prefix'].trim(substr($args[0], $offset + 4), ' `');
-            $alias = ' as `' . $alias . '`';
+            $tableName = substr($args[0], 0, $foffset);
+            $soffset = strrpos($args[0], ' ');
+            $alias = ' as `' . $this->conf[$this->connect]['prefix'].substr($args[0], $soffset+1) . '`';
         }
         $joinSql .= '`' . $this->conf[$this->connect]['prefix'] . $tableName . '`' . $alias;
-        $argNum = count($args);
-        if ($argNum === 4) { // Simple parameters
-            $arr1 = explode('.', $args[1]);
-            $arr2 = explode('.', $args[3]);
-            if (count($arr1) === 2) {
-                $table1 = trim($arr1[0], ' `');
-                $join1 = '`' . $this->conf[$this->connect]['prefix'] . $table1 . '`.' . $arr1[1];
+        if (isset($args[3])) { // Simple parameters
+            $offset1 = strpos($args[1], '.');
+            $offset2 = strpos($args[3], '.');
+
+            if ($offset1 !== false) {
+                $join1 = '`' . $this->conf[$this->connect]['prefix'] . trim(substr($args[1],0, $offset1)) . '`.`' . trim(substr($args[1], $offset1+1)) . '`';
             } else {
-                $join1 = $arr1[0];
-                if (strpos($arr1[0], '`') === false) $join1 = '`' . $join1 . '`';
+                $join1 = '`' . trim($args[1]) . '`';
             }
-            if (count($arr2) === 2) {
-                $table2 = trim($arr2[0], ' `');
-                $join2 = '`' . $this->conf[$this->connect]['prefix'] . $table2 . '`.' . $arr2[1];
+            if ($offset2 !== false) {
+                $join2 = '`' . $this->conf[$this->connect]['prefix'] . trim(substr($args[3],0, $offset2)) . '`.`' . trim(substr($args[3], $offset2+1)) . '`';
             } else {
-                $join2 = $arr2[0];
-                if (strpos($arr1[0], '`') === false) $join2 = '`' . $join2 . '`';
+                $join2 = '`' . $args[3] . '`';
             }
             $joinSql .= " on {$join1}{$args[2]}{$join2}";
-        } elseif ($argNum === 3) { // Native sql
+        } else { // Native sql
             $joinSql .= " on $args[1]";
             $this->paramSlice['join'] = array_merge($this->paramSlice['join'], $args[2]);
         }
         $this->sqlSlice['join'] .= ' ' . $joinSql . ' ';
     }
 
-    private function _where(...$where) : void
+    private function _where($relation, ...$where) : void
     {
-        $relation = $where[1];
-        $where = $where[0];
         if (empty($where[0])) return;
         $whereSql = '';
         $whereParams = [];
@@ -736,11 +782,16 @@ class DB
             $whereSql .= '(';
             foreach ($where[0] as $val) {
                 $column = $this->column($val[0]);
-                $whereSql .= $column.' '.$val[1].' ? and ';
-                $whereParams[] = $val[2];
+                if (isset($val[2])) {
+                    $whereSql .= $column.' '.$val[1].' ? and ';
+                    $whereParams[] = $val[2];
+                } else {
+                    $whereSql .= $column.' = ? and ';
+                    $whereParams[] = $val[1];
+                }
             }
             $whereSql = substr($whereSql, 0, -5) . ')';
-        } elseif (is_callable($where[0])) { // Closure
+        } elseif (!is_string($where[0]) && is_callable($where[0])) { // Closure,此处不能是函数名
             if ($relation === 'and') {
                 $where[0]($this->andGroupBegin());
             } else {
@@ -748,14 +799,14 @@ class DB
             }
             $this->groupEnd();
         } else {
-            $agsNum = count($where);
-            if ($agsNum === 3) { // Simple parameters
+            if (isset($where[2])) {
                 $column = $this->column($where[0]);
                 $whereSql .= $column.' '.$where[1].' ?';
                 $whereParams[] = $where[2];
-            } elseif ($agsNum === 2) {  // Native sql
-                $whereSql = $where[0];
-                $whereParams = $where[1];
+            } else {
+                $column = $this->column($where[0]);
+                $whereSql .= $column.' = ?';
+                $whereParams[] = $where[1];
             }
         }
         if ($this->sqlSlice['where'] === '') {
@@ -769,14 +820,13 @@ class DB
 
     private function column(string $column) : string
     {
-        $arr = explode('.', $column);
+        $offset = strpos($column, '.');
         $table = '';
-        if (count($arr) === 2) {
-            $table = trim($arr[0], ' `');
-            $table = '`' . $this->conf[$this->connect]['prefix'] . $table . '`.';
-            $column = $arr[1];
+        if ($offset !== false) {
+            $table = '`' . $this->conf[$this->connect]['prefix'] . rtrim(substr($column, 0, $offset)) . '`.';
+            $column = ltrim(substr($column, $offset+1));
         }
-        return $table . '`' . trim($column, ' `') . '`';
+        return $table . '`' . $column . '`';
     }
 
 }
