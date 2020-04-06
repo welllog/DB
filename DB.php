@@ -111,7 +111,7 @@ class DB
         return $this;
     }
 
-    public function ditinct() : DB
+    public function distinctt() : DB
     {
         $this->sqlSlice['distinct'] = ' distinct';
         return $this;
