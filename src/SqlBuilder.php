@@ -1,98 +1,50 @@
 <?php
 
-namespace orinfy;
+namespace Odb;
 
-class DB
+class SqlBuilder
 {
-    private static $instance;
-    private $conf;
-    private $links;
-    private $currentLink;
-    private $connect;
+    /** @var SqlOperator */
+    protected $op;
+    protected $prefix;
+    protected $table;
+    protected $sql;
+    protected $params = [];
 
-    private $pdoStatement;
-    private $table;
-    private $sql;
-    private $params = [];
-    private $lastInsertId;
-
-    private $sqlSlice = [
+    protected $sqlSlice = [
         'distinct' => '', 'columns' => '', 'table' => '', 'join' => '', 'where' => '', 'group_by' => '',
-        'having' => '', 'order_by' => '', 'limit' => '', 'update' => '', 'insert' => '', 'delete' => ''
+        'having' => '', 'order_by' => '', 'limit' => '', 'update' => ''
     ];
-    private $paramSlice = [
-        'allow' => [], 'join' => [], 'where' => [], 'having' => [], 'insert' => [], 'update' => []
-    ];
-
-    private $sqlSliceInit = [
-        'distinct' => '', 'columns' => '', 'table' => '', 'join' => '', 'where' => '', 'group_by' => '',
-        'having' => '', 'order_by' => '', 'limit' => '', 'update' => '', 'insert' => '', 'delete' => ''
-    ];
-    private $paramSliceInit = [
-        'allow' => [], 'join' => [], 'where' => [], 'having' => [], 'insert' => [], 'update' => []
+    protected $paramSlice = [
+        'allow' => [], 'join' => [], 'where' => [], 'having' => [], 'update' => []
     ];
 
-    private function __construct() {}
-    private function __clone() {}
-
-    public  function __wakeup() {
-        self::$instance = $this;
-    }
-
-    public static function i() : DB
+    public static function new(string $tablePrefix = '')
     {
-        if (null === self::$instance) {
-            self::$instance = new self();
-        }
-        self::$instance->connect();
-        return self::$instance;
+        return new static($tablePrefix);
     }
 
-    public function connect(string $connect = 'default') : void
+    /**
+     * SqlBuilder constructor.
+     * @param string $tablePrefix
+     */
+    public function __construct(string $tablePrefix = '')
     {
-        if (null === $this->conf) {
-            $this->conf = include __DIR__ . '/DBConf.php';
-        }
-        $conf = $this->conf[$connect];
-        if (!isset($this->links[$connect])) {
-            if (!class_exists(\PDO::class)) throw new \Exception('没有pdo扩展');
-            $dsn = $conf['driver'] . ":host={$conf['host']};port={$conf['port']};dbname={$conf['dbname']};charset={$conf['charset']}";
-            $conf['params'][\PDO::ATTR_PERSISTENT] = $conf['pconnect'] ? true : false;
-            $conf['params'][\PDO::ATTR_TIMEOUT] = $conf['time_out'] ? $conf['time_out'] : 3;
-            $conf['params'][\PDO::ATTR_ERRMODE] = $conf['throw_exception'] ? \PDO::ERRMODE_EXCEPTION : \PDO::ERRMODE_SILENT;
-            $this->links[$connect] = new \PDO($dsn, $conf['username'], $conf['password'], $conf['params']);
-
-        }
-        $this->currentLink = &$this->links[$connect];
-        $this->connect = $connect;
+        $this->prefix = $tablePrefix;
     }
 
-    public function getDBVersion() : ?string
+    public function setOperator(SqlOperator $op)
     {
-        return $this->currentLink->getAttribute(\PDO::ATTR_SERVER_VERSION);
+        $this->op = $op;
+        return $this;
     }
 
-    public function setAttribute(int $attributeName, int $attributeVal) : void
-    {
-        $this->currentLink->setAttribute($attributeName, $attributeVal);
-    }
-
-    public function getPdo() : \PDO
-    {
-        return $this->currentLink;
-    }
-
-    public function close(string $connect = '') : void
-    {
-        if ($connect === '') { // close all links
-            $this->links = [];
-            self::$instance = null;
-        } else {
-            $this->links[$connect] = null;
-        }
-    }
-
-    public function table(string $table) : DB
+    /**
+     * usage: table('user') || table('user as u') || table('user u');
+     * @param string $table
+     * @return $this
+     */
+    public function table(string $table)
     {
         $table = trim($table);
         $foffset = strpos($table, ' ');
@@ -104,20 +56,29 @@ class DB
             $tableName = substr($table, 0, $foffset);
 
             $soffset = strrpos($table, ' ');
-            $alias = ' as `' . $this->conf[$this->connect]['prefix'] . substr($table, $soffset+1) . '`';
+            $alias = ' as `' . $this->prefix . substr($table, $soffset+1) . '`';
         }
-        $this->table = $this->conf[$this->connect]['prefix'] . $tableName;
+        $this->table = $this->prefix . $tableName;
         $this->sqlSlice['table'] = ' `' . $this->table . '`' . $alias;
         return $this;
     }
 
-    public function ditinct() : DB
+    /**
+     * usage: distinct()
+     * @return $this
+     */
+    public function distinct()
     {
         $this->sqlSlice['distinct'] = ' distinct';
         return $this;
     }
 
-    public function select($columns) : DB
+    /**
+     * usage: select(['id', 'age']) || select('id', 'age') || select('gradescore as score', 'sum(user.score) num')
+     * @param $columns
+     * @return $this
+     */
+    public function select($columns)
     {
         $columns = is_array($columns) ? $columns : func_get_args();
         if ($columns === []) {
@@ -137,7 +98,7 @@ class DB
             // 处理可能带有表名的列名
             $arr = explode('.', $column);
             if (count($arr) === 2) {
-                $table = '`' . $this->conf[$this->connect]['prefix'] . trim($arr[0]) . '`.';
+                $table = '`' . $this->prefix . trim($arr[0]) . '`.';
                 $column = $arr[1];
             }
             $column = trim($column, ' )');
@@ -161,19 +122,37 @@ class DB
         return $this;
     }
 
-    public function where(...$where) : DB
+    /**
+     * usage: where('id', '=', 2) || where([['id', '=', 2], ['age', '>', 24]]) || where('id > ?', [45])
+     * || where(function($query){$query->where('age', '>', 24)}) || where('id', 2)
+     * @param array ...$where
+     * @return $this
+     */
+    public function where(...$where)
     {
         $this->_where('and', ...$where);
         return $this;
     }
 
-    public function orWhere(...$where) : DB
+    /**
+     * usage: orWhere('id', '=', 2) || orWhere([['id', '=', 2], ['age', '>', 24]]) || orWhere('id > ?', [45])
+     * || orWhere(function($query){$query->where('age', '>', 24)}) || orWhere('id', 2)
+     * @param array ...$where
+     * @return $this
+     */
+    public function orWhere(...$where)
     {
         $this->_where('or', ...$where);
         return $this;
     }
 
-    public function whereRaw(string $whereSql, array $whereParams) : DB
+    /**
+     * usage: whereRaw('test_sup | 2 = ?', [6])
+     * @param string $whereSql
+     * @param array $whereParams
+     * @return $this
+     */
+    public function whereRaw(string $whereSql, array $whereParams)
     {
         if ($this->sqlSlice['where'] === '') {
             $this->sqlSlice['where'] = ' where ' . $whereSql;
@@ -185,7 +164,12 @@ class DB
         return $this;
     }
 
-    public function whereNull(string $column) : DB
+    /**
+     * usage: whereNull('name')
+     * @param string $column
+     * @return $this
+     */
+    public function whereNull(string $column)
     {
         $column = $this->column($column);
         $whereSql = $column . ' is null';
@@ -198,7 +182,12 @@ class DB
         return $this;
     }
 
-    public function whereNotNull(string $column) : DB
+    /**
+     * usage: whereNotNull('name')
+     * @param string $column
+     * @return $this
+     */
+    public function whereNotNull(string $column)
     {
         $column = $this->column($column);
         $whereSql = $column . ' is not null';
@@ -211,7 +200,13 @@ class DB
         return $this;
     }
 
-    public function whereBetween(string $column, array $between) : DB
+    /**
+     * usage: whereBetween('age', [22, 26])
+     * @param string $column
+     * @param array $between
+     * @return $this
+     */
+    public function whereBetween(string $column, array $between)
     {
         $column = $this->column($column);
         $whereSql = $column . " between ? and ?";
@@ -225,7 +220,13 @@ class DB
         return $this;
     }
 
-    public function whereNotBetween(string $column, array $between) : DB
+    /**
+     * usage: whereNotBetween('age', [0, 18])
+     * @param string $column
+     * @param array $between
+     * @return $this
+     */
+    public function whereNotBetween(string $column, array $between)
     {
         $column = $this->column($column);
         $whereSql = $column . " not between ? and ?";
@@ -239,7 +240,13 @@ class DB
         return $this;
     }
 
-    public function whereIn(string $column, array $in) : DB
+    /**
+     * usage: whereIn('id', [1,3,5,6])
+     * @param string $column
+     * @param array $in
+     * @return $this
+     */
+    public function whereIn(string $column, array $in)
     {
         $column = $this->column($column);
         $place_holders = implode(',', array_fill(0, count($in), '?'));
@@ -254,7 +261,13 @@ class DB
         return $this;
     }
 
-    public function whereNotIn(string $column, array $in) : DB
+    /**
+     * usage: whereNotIn('id', [2,3])
+     * @param string $column
+     * @param array $in
+     * @return $this
+     */
+    public function whereNotIn(string $column, array $in)
     {
         $column = $this->column($column);
         $place_holders = implode(',', array_fill(0, count($in), '?'));
@@ -269,7 +282,12 @@ class DB
         return $this;
     }
 
-    public function whereColumn($where) : DB
+    /**
+     * usage: whereColumn('id', '>', 'parent_id')
+     * @param $where
+     * @return $this
+     */
+    public function whereColumn($where)
     {
         if (empty($where)) return $this;
         $whereSql = '';
@@ -296,25 +314,47 @@ class DB
         return $this;
     }
 
-    public function join(...$args) : DB
+    /**
+     * usage: table('user as u')->join('article as a', 'u.id', '=', 'a.uid') ||
+     * join('role', 'test_user.role_id=test_role.id and test_role.status>?', [1])
+     * @param array ...$args
+     * @return $this
+     */
+    public function join(...$args)
     {
         $this->_join('inner join ', ...$args);
         return $this;
     }
 
-    public function leftJoin(...$args) : DB
+    /**
+     * usage: same as join
+     * @param array ...$args
+     * @return $this
+     */
+    public function leftJoin(...$args)
     {
         $this->_join('left join ', ...$args);
         return $this;
     }
 
-    public function rightJoin(...$args) : DB
+    /**
+     * usage: same as join
+     * @param array ...$args
+     * @return $this
+     */
+    public function rightJoin(...$args)
     {
         $this->_join('right join ', ...$args);
         return $this;
     }
 
-    public function orderBy(string $column, string $order) : DB
+    /**
+     * usage: orderBy('id', 'desc')
+     * @param string $column
+     * @param string $order
+     * @return $this
+     */
+    public function orderBy(string $column, string $order)
     {
         $column = $this->column($column);
         if ($this->sqlSlice['order_by'] === '') {
@@ -325,7 +365,12 @@ class DB
         return $this;
     }
 
-    public function groupBy($column) : DB
+    /**
+     * usage: groupBy('username') || groupBy(['username', 'age']) || groupBy('username', 'age')
+     * @param $column
+     * @return $this
+     */
+    public function groupBy($column)
     {
         $columns = is_array($column) ? $column : func_get_args();
         $columnStr = '';
@@ -337,7 +382,11 @@ class DB
         return $this;
     }
 
-    public function having(...$params) : DB
+    /**
+     * usage: having('num', '>', 2) || having('num > ?', [2])
+     * @return $this
+     */
+    public function having(...$params)
     {
         $havingSql = ' having ';
         if (isset($params[2])) { // Simple parameters
@@ -352,14 +401,25 @@ class DB
         return $this;
     }
 
-    public function limit(int $limit, int $length = 0) : DB
+    /**
+     * usage: limit(3) || limit(2,3)
+     * @param int $limit
+     * @param int $length
+     * @return $this
+     */
+    public function limit(int $limit, int $length = 0)
     {
         $this->sqlSlice['limit'] = ' limit ' . intval($limit);
         if ($length) $this->sqlSlice['limit'] .= ',' . intval($length);
         return $this;
     }
 
-    public function allow($columns) : DB
+    /**
+     * used for insert,  usage: allow('name', 'age') || allow(['name', 'age'])
+     * @param $columns
+     * @return $this
+     */
+    public function allow($columns)
     {
         $allows = is_array($columns) ? $columns : func_get_args();
         foreach ($allows as $a) {
@@ -368,15 +428,34 @@ class DB
         return $this;
     }
 
-    public function insert(array $insert) : int
+    /**
+     * @return $this
+     */
+    public function buildQuery()
     {
-        if (!$insert) return 0;
+        $columns = $this->sqlSlice['columns'] ? $this->sqlSlice['columns'] : ' * ';
+        $this->sql = 'select' . $this->sqlSlice['distinct'] . $columns . 'from'.
+            $this->sqlSlice['table'] .' '. $this->sqlSlice['join'] . $this->sqlSlice['where'] .
+            $this->sqlSlice['group_by'] . $this->sqlSlice['having'] . $this->sqlSlice['order_by'] .
+            $this->sqlSlice['limit'];
+        $this->params = array_merge($this->paramSlice['join'], $this->paramSlice['where'], $this->paramSlice['having']);
+//            $this->sql = rtrim($this->sql);
+        $this->clean();
+        return $this;
+    }
+
+    /**
+     * @param array $insert
+     * @return $this
+     */
+    public function buildInsert(array $insert)
+    {
         $columns = '(';
         $values = '';
         $allow = $this->paramSlice['allow'];
+        $insertVal = [];
         $filter = ($allow !== []) ? true : false;
         if (isset($insert[0]) && is_array($insert[0])) {
-            if (!$insert[0]) return 0;
             $time = 0;
             foreach ($insert as $val) {
                 $values .= '(';
@@ -384,7 +463,7 @@ class DB
                     if (!$filter || isset($allow[$k])) {
                         if ($time == 0) $columns .= '`' . $k . '`,';
                         $values .= '?,';
-                        $this->paramSlice['insert'][] = $v;
+                        $insertVal[] = $v;
                     }
                 }
                 ++$time;
@@ -398,43 +477,32 @@ class DB
                 if (!$filter || isset($allow[$key])) {
                     $columns .= '`' . $key . '`,';
                     $values .= '?,';
-                    $this->paramSlice['insert'][] = $val;
+                    $insertVal[] = $val;
                 }
             }
             $values = rtrim($values, ',') . ')';
             $columns = rtrim($columns, ',') . ')';
         }
-        $this->sqlSlice['insert'] = $columns . ' values ' . $values;
-        $this->resolve('insert');
-        $this->_exec();
-        return $this->pdoStatement->rowCount();
+        $this->sql = 'insert into ' . $this->sqlSlice['table'] . ' ' . $columns . ' values ' . $values;
+        $this->params = $insertVal;
+        $this->clean();
+        return $this;
     }
 
-    public function insertGetId(array $insert) : int
+    protected function _buildUpdate()
     {
-        if (!$insert) return 0;
-        $columns = '(';
-        $values = '(';
-        $allow = $this->paramSlice['allow'];
-        $filter = ($allow !== []) ? true : false;
-        foreach ($insert as $key => $val) {
-            if (!$filter || isset($allow[$key])) {
-                $columns .= '`' . $key . '`,';
-                $values .= '?,';
-                $this->paramSlice['insert'][] = $val;
-            }
-        }
-        $values = rtrim($values, ',') . ')';
-        $columns = rtrim($columns, ',') . ')';
-        $this->sqlSlice['insert'] = $columns . ' values ' . $values;
-        $this->resolve('insert');
-        $this->_exec();
-        return $this->currentLink->lastInsertId();
+        $where = $this->sqlSlice['where'] ?: 'where 1=2';
+        $this->sql = 'update ' . $this->sqlSlice['table'] . ' ' . $this->sqlSlice['update'] . ' ' . $where;
+        $this->params = array_merge($this->paramSlice['update'], $this->paramSlice['where']);
+        $this->clean();
     }
 
-    public function update(array $update) : int
+    /**
+     * @param array $update
+     * @return $this
+     */
+    public function buildUpdate(array $update)
     {
-        if (!$update) return 0;
         $updateSql = 'set ';
         $allow = $this->paramSlice['allow'];
         $filter = ($allow !== []) ? true : false;
@@ -445,12 +513,15 @@ class DB
             }
         }
         $this->sqlSlice['update'] = rtrim($updateSql, ',');
-        $this->resolve('update');
-        $this->_exec();
-        return $this->pdoStatement->rowCount();
+        $this->_buildUpdate();
+        return $this;
     }
 
-    public function increment($increment) : int
+    /**
+     * @param $increment
+     * @return $this
+     */
+    public function buildIncrement($increment)
     {
         $updateSql = 'set ';
         if (is_array($increment)) {
@@ -467,12 +538,15 @@ class DB
             $this->sqlSlice['update'] = $updateSql . $field . '=' . $field . '+?';
             $this->paramSlice['update'][] = $incr;
         }
-        $this->resolve('update');
-        $this->_exec();
-        return $this->pdoStatement->rowCount();
+        $this->_buildUpdate();
+        return $this;
     }
 
-    public function decrement($decrement) : int
+    /**
+     * @param $decrement
+     * @return $this
+     */
+    public function buildDecrement($decrement)
     {
         $updateSql = 'set ';
         if (is_array($decrement)) {
@@ -489,25 +563,108 @@ class DB
             $this->sqlSlice['update'] = $updateSql . $field . '=' . $field . '-?';
             $this->paramSlice['update'][] = $decr;
         }
-        $this->resolve('update');
-        $this->_exec();
-        return $this->pdoStatement->rowCount();
+        $this->_buildUpdate();
+        return $this;
+    }
+
+    /**
+     * @return $this
+     */
+    public function buildDelete()
+    {
+        $where = $this->sqlSlice['where'] ?: 'where 1=2';
+        $this->sql = 'delete from ' . $this->sqlSlice['table'] . ' ' . $where;
+        $this->params = $this->paramSlice['where'];
+        $this->clean();
+        return $this;
+    }
+
+    public function getOperator()
+    {
+        return $this->op;
+    }
+
+    /**
+     * usage: insert(['id' => 2, 'name' => 'jack']) || insert([['name' => 'jack'], ['name' => 'linda']])
+     * @param array $insert
+     * @return int
+     * @throws \Exception
+     */
+    public function insert(array $insert) : int
+    {
+        if (!$insert) return 0;
+        if (isset($insert[0]) && $insert[0] == []) return $this;
+        $this->buildInsert($insert);
+        return $this->op->prepare($this->sql)->execute($this->params)->rowCount();
+    }
+
+    /**
+     * usage: insertGetId(['id' => 2, 'name' => 'jack'])
+     * @param array $insert
+     * @return int
+     * @throws \Exception
+     */
+    public function insertGetId(array $insert)
+    {
+        if (!$insert) return 0;
+        $this->buildInsert($insert);
+        return $this->op->prepare($this->sql)->execute($this->params)->lastInsertId();
+    }
+
+    /**
+     * usage: update(['id' => 2, 'name' => 'jack'])
+     * @param array $update
+     * @return int
+     * @throws \Exception
+     */
+    public function update(array $update) : int
+    {
+        if (!$update) return 0;
+        $this->buildUpdate($update);
+        return $this->op->prepare($this->sql)->execute($this->params)->rowCount();
+    }
+
+    /**
+     * usage: increment('score') || increment('score', 2) || increment([['score', 1], ['level', 9]]);
+     * @param $increment
+     * @return int
+     * @throws \Exception
+     */
+    public function increment($increment) : int
+    {
+        $this->buildIncrement($increment);
+        return $this->op->prepare($this->sql)->execute($this->params)->rowCount();
+    }
+
+    /**
+     * usage: increment('score') || increment('score', 2) || increment([['score', 1], ['level', 9]]);
+     * @param $decrement
+     * @return int
+     * @throws \Exception
+     */
+    public function decrement($decrement) : int
+    {
+        $this->buildDecrement($decrement);
+        return $this->op->prepare($this->sql)->execute($this->params)->rowCount();
     }
 
     public function delete() : int
     {
-        $this->resolve('delete');
-        $this->_exec();
-        return $this->pdoStatement->rowCount();
+        $this->buildDelete();
+        return $this->op->prepare($this->sql)->execute($this->params)->rowCount();
     }
 
     public function getSql() : string
     {
-        $this->resolve();
-        return $this->resolveSql();
+        return $this->sql;
     }
 
-    protected function resolveSql() : string
+    public function getParams() : array
+    {
+        return $this->params;
+    }
+
+    public function getRSql()
     {
         if (!$this->sql) return '';
         $arr = explode('?', $this->sql);
@@ -521,224 +678,71 @@ class DB
 
     public function get() : array
     {
-        $this->resolve();
-        $this->_exec();
-        return $this->pdoStatement->fetchAll(\PDO::FETCH_ASSOC); // PDO::FETCH_OBJ
+        $this->buildQuery();
+        return $this->op->prepare($this->sql)->execute($this->params)->get();
     }
 
     public function first() : ?array
     {
-        $this->resolve();
-        $this->_exec();
-        $res = $this->pdoStatement->fetch(\PDO::FETCH_ASSOC);
-//        $this->pdoStatement->closeCursor();
-        return $res ? $res : null;
+        $this->buildQuery();
+        return $this->op->prepare($this->sql)->execute($this->params)->first();
     }
 
     public function pluck(string $col, string $key = '') : array
     {
         $columns[] = $col;
         ($key !== '') && ($columns[] = $key);
-        $res = $this->select($columns)->get();
-        if ($res === []) return $res;
-        $col = trim($col);
-        $offset = strpos($col, '.');
-        if ($offset !== false) {
-            $col = ltrim(substr($col, $offset+1));
-        }
-        if ($key !== '') {
-            $data = [];
-            $key = trim($key);
-            $offset = strpos($key, '.');
-            if ($offset !== false) {
-                $key = ltrim(substr($key, $offset+1));
-            }
-            foreach ($res as $val) {
-                $data[$val[$key]] = $val[$col];
-            }
-            return $data;
-        }
-        return array_column($res, $col);
+        $this->select($columns)->buildQuery();
+        return $this->op->prepare($this->sql)->execute($this->params)->pluck($col, $key);
     }
 
     public function value(string $column) : ?string
     {
-        $res = $this->select($column)->first();
-        if ($res === null) return null;
-        return $res[$column];
+        $this->select($column)->buildQuery();
+        return $this->op->prepare($this->sql)->execute($this->params)->value($column);
     }
 
     public function max(string $column) : int
     {
         $res = $this->select('max('.$column.') as num')->first();
-        if ($res === null) return 0;
-        return $res['num'];
+        return $res['num'] ?: 0;
     }
 
     public function min(string $column) : int
     {
         $res = $this->select('min('.$column.') as num')->first();
-        if ($res === null) return 0;
-        return $res['num'];
+        return $res['num'] ?: 0;
     }
 
     public function sum(string $column) : int
     {
         $res = $this->select('sum('.$column.') as num')->first();
-        if ($res === null) return 0;
-        return $res['num'];
+        return $res['num'] ?: 0;
     }
 
     public function count() : int
     {
         $res = $this->select('count(*) as num')->first();
-        if ($res === null) return 0;
         return $res['num'];
     }
 
     public function avg(string $column) : int
     {
         $res = $this->select('avg('.$column.') as num')->first();
-        if ($res === null) return 0;
-        return $res['num'];
+        return $res['num'] ?: 0;
     }
 
-    public function beginTrans()
+    public function clean()
     {
-        $this->currentLink->beginTransaction();
-    }
-
-    public function inTrans() : bool
-    {
-        return $this->currentLink->inTransaction();
-    }
-
-    public function rollBack()
-    {
-        $this->currentLink->rollBack();
-    }
-
-    public function commit()
-    {
-        $this->currentLink->commit();
-    }
-
-    public function prepare(string $sql) : DB
-    {
-        $this->pdoStatement = $this->currentLink->prepare($sql);
-        return $this;
-    }
-
-    public function execute(array $params = []) : DB
-    {
-        $this->pdoStatement->execute($params);
-        return $this;
-    }
-
-    public function rowCount() : int
-    {
-        return $this->pdoStatement->rowCount();
-    }
-
-    public function lastInsertId() : int
-    {
-        return $this->currentLink->lastInsertId();
-    }
-
-    public function exec(string $sql) : int
-    {
-        return $this->currentLink->exec($sql);
-    }
-
-    public function query(string $sql) : DB
-    {
-        $this->pdoStatement = $this->currentLink->query($sql);
-        return $this;
-    }
-
-    public function fetchAll() : array
-    {
-        return $this->pdoStatement->fetchAll(\PDO::FETCH_ASSOC);
-    }
-
-    public function fetch() : ?array
-    {
-        return $this->pdoStatement->fetch(\PDO::FETCH_ASSOC);
-    }
-
-    public function throwError() : ?string
-    {
-        $obj = empty($this->pdoStatement) ? $this->currentLink : $this->pdoStatement;
-        $errArr = $obj->errorInfo();
-        if ($errArr[0] != '00000' && $errArr[0] !== '') {
-            return 'SQLSTATE: ' . $errArr[0] . '; SQL ERROR: ' . $errArr[2] . '; ERROR SQL: ' . $this->sql;
+        foreach ($this->sqlSlice as $sk => $sv) {
+            $this->sqlSlice[$sk] = '';
+        }
+        foreach ($this->paramSlice as $pk => $pv) {
+            $this->paramSlice[$pk] = [];
         }
     }
 
-    private function _exec() : int
-    {
-        try {
-            $this->pdoStatement = $this->currentLink->prepare($this->sql);
-            $this->pdoStatement->execute($this->params);
-        } catch (\Exception $e) {
-            $sql = $this->resolveSql();
-            throw new \Exception('error: '.$e->getMessage().' ; sql: ' . $sql);
-        }
-    }
-
-    private function resolve(string $option = 'select') : void
-    {
-        if (substr_count($this->sql, '?') !== count($this->params)) throw new \Exception('绑定参数错误:'.$this->sql);
-        if ($option === 'select') {
-            $columns = $this->sqlSlice['columns'] ? $this->sqlSlice['columns'] : ' * ';
-            $this->sql = 'select' . $this->sqlSlice['distinct'] . $columns . 'from'.
-                $this->sqlSlice['table'] . $this->sqlSlice['join'] . $this->sqlSlice['where'] .
-                $this->sqlSlice['group_by'] . $this->sqlSlice['having'] . $this->sqlSlice['order_by'] .
-                $this->sqlSlice['limit'];
-            $this->params = array_merge($this->paramSlice['join'], $this->paramSlice['where'], $this->paramSlice['having']);
-            $this->sql = rtrim($this->sql);
-        } elseif ($option === 'update') {
-            $where = $this->sqlSlice['where'] ?: 'where 1=2';
-            $this->sql = 'update ' . $this->sqlSlice['table'] . ' ' . $this->sqlSlice['update'] . ' ' . $where;
-            $this->params = array_merge($this->paramSlice['update'], $this->paramSlice['where']);
-        } elseif ($option === 'insert') {
-            $this->sql = 'insert into ' . $this->sqlSlice['table'] . ' ' . $this->sqlSlice['insert'];
-            $this->params = $this->paramSlice['insert'];
-        } elseif ($option === 'delete') {
-            $where = $this->sqlSlice['where'] ?: 'where 1=2';
-            $this->sql = 'delete from ' . $this->sqlSlice['table'] . ' ' . $where;
-            $this->params = $this->paramSlice['where'];
-        }
-        $this->sqlSlice = $this->sqlSliceInit;
-        $this->paramSlice = $this->paramSliceInit;
-    }
-
-    private function orGroupBegin() : DB
-    {
-        if ($this->sqlSlice['where'] === '') {
-            $this->sqlSlice['where'] = 'where (';
-        } else {
-            $this->sqlSlice['where'] .= ' or (';
-        }
-        return $this;
-    }
-
-    private function andGroupBegin() : DB
-    {
-        if ($this->sqlSlice['where'] === '') {
-            $this->sqlSlice['where'] = 'where (';
-        } else {
-            $this->sqlSlice['where'] .= ' and (';
-        }
-        return $this;
-    }
-
-    private function groupEnd() : void
-    {
-        $this->sqlSlice['where'] .= ')';
-    }
-
-    private function _join($joinSql, ...$args) : void
+    protected function _join($joinSql, ...$args) : void
     {
         $args[0] = trim($args[0]);
         $foffset = strpos($args[0], ' ');
@@ -748,20 +752,20 @@ class DB
         } else {
             $tableName = substr($args[0], 0, $foffset);
             $soffset = strrpos($args[0], ' ');
-            $alias = ' as `' . $this->conf[$this->connect]['prefix'].substr($args[0], $soffset+1) . '`';
+            $alias = ' as `' . $this->prefix.substr($args[0], $soffset+1) . '`';
         }
-        $joinSql .= '`' . $this->conf[$this->connect]['prefix'] . $tableName . '`' . $alias;
+        $joinSql .= '`' . $this->prefix . $tableName . '`' . $alias;
         if (isset($args[3])) { // Simple parameters
             $offset1 = strpos($args[1], '.');
             $offset2 = strpos($args[3], '.');
 
             if ($offset1 !== false) {
-                $join1 = '`' . $this->conf[$this->connect]['prefix'] . trim(substr($args[1],0, $offset1)) . '`.`' . trim(substr($args[1], $offset1+1)) . '`';
+                $join1 = '`' . $this->prefix . trim(substr($args[1],0, $offset1)) . '`.`' . trim(substr($args[1], $offset1+1)) . '`';
             } else {
                 $join1 = '`' . trim($args[1]) . '`';
             }
             if ($offset2 !== false) {
-                $join2 = '`' . $this->conf[$this->connect]['prefix'] . trim(substr($args[3],0, $offset2)) . '`.`' . trim(substr($args[3], $offset2+1)) . '`';
+                $join2 = '`' . $this->prefix . trim(substr($args[3],0, $offset2)) . '`.`' . trim(substr($args[3], $offset2+1)) . '`';
             } else {
                 $join2 = '`' . $args[3] . '`';
             }
@@ -773,7 +777,32 @@ class DB
         $this->sqlSlice['join'] .= ' ' . $joinSql . ' ';
     }
 
-    private function _where($relation, ...$where) : void
+    protected function orGroupBegin()
+    {
+        if ($this->sqlSlice['where'] === '') {
+            $this->sqlSlice['where'] = 'where (';
+        } else {
+            $this->sqlSlice['where'] .= ' or (';
+        }
+        return $this;
+    }
+
+    protected function andGroupBegin()
+    {
+        if ($this->sqlSlice['where'] === '') {
+            $this->sqlSlice['where'] = 'where (';
+        } else {
+            $this->sqlSlice['where'] .= ' and (';
+        }
+        return $this;
+    }
+
+    protected function groupEnd() : void
+    {
+        $this->sqlSlice['where'] .= ')';
+    }
+
+    protected function _where($relation, ...$where) : void
     {
         if (empty($where[0])) return;
         $whereSql = '';
@@ -818,12 +847,12 @@ class DB
         $this->paramSlice['where'] = array_merge($this->paramSlice['where'], $whereParams);
     }
 
-    private function column(string $column) : string
+    protected function column(string $column) : string
     {
         $offset = strpos($column, '.');
         $table = '';
         if ($offset !== false) {
-            $table = '`' . $this->conf[$this->connect]['prefix'] . rtrim(substr($column, 0, $offset)) . '`.';
+            $table = '`' . $this->prefix . rtrim(substr($column, 0, $offset)) . '`.';
             $column = ltrim(substr($column, $offset+1));
         }
         return $table . '`' . $column . '`';
