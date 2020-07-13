@@ -12,12 +12,7 @@ class DB
      */
     public static function loadConfig(string $configPath)
     {
-        if (self::$conf === null) {
-            self::$conf = include $configPath;
-            if (!is_array(self::$conf)) {
-                throw new \Exception("db config error");
-            }
-        }
+        SqlOperator::loadConfig($configPath);
     }
 
     /**
